@@ -1,0 +1,13 @@
+[project]
+name = "comfyui-lora-stack-pack"
+description = "A custom node pack for multi-LoRA stacking and dynamic weight management"
+version = "1.0.0"
+dependencies = []
+license = { text = "MIT" }
+
+[project.urls]
+Repository = "https://github.com/makszlak/ComfyUI_lora_stack_pack"
+
+[tool.comfy]
+PublisherId = "makszlak"
+DisplayName = "Lora Stack Pack"
