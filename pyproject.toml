@@ -7,7 +7,9 @@ license = { text = "MIT" }
 
 [project.urls]
 Repository = "https://github.com/makszlak/ComfyUI_lora_stack_pack"
+# Icon = "https://raw.githubusercontent.com/makszlak/ComfyUI_lora_stack_pack/main/icon.png"
 
 [tool.comfy]
 PublisherId = "makszlak"
 DisplayName = "Lora Stack Pack"
+Icon = "https://raw.githubusercontent.com/makszlak/ComfyUI_lora_stack_pack/main/icon.png"
