@@ -19,7 +19,7 @@ import comfy.sd
 import comfy.utils
 import folder_paths
 
-from .lora_utils import extract_trigger_words
+from .lora_utils import extract_trigger_words, filter_tag_texts
 
 
 def _lora_list():
@@ -47,6 +47,9 @@ class LoraStackInputLoader:
             "required": {
                 "model": ("MODEL",),
                 "clip": ("CLIP",),
+                # matches ComfyUI's core CLIPSetLastLayer convention: negative
+                # values, -1 = last layer (no skip) down to -24
+                "stop_at_clip_layer": ("INT", {"default": -1, "min": -24, "max": -1, "step": 1}),
             },
             "optional": {
                 "lora_stack": ("LORA_STACK",),
@@ -58,11 +61,13 @@ class LoraStackInputLoader:
     FUNCTION = "load"
     CATEGORY = "loaders/lora_stack"
 
-    def load(self, model, clip, lora_stack=None):
+    def load(self, model, clip, stop_at_clip_layer, lora_stack=None):
         m, c = model, clip
         if lora_stack:
             for lora_name, sm, sc in lora_stack:
                 m, c = _apply_lora(m, c, lora_name, sm, sc)
+        c = c.clone()
+        c.clip_layer(stop_at_clip_layer)
         return (m, c)
 
 
@@ -91,7 +96,7 @@ class LoraStackContainer5:
             },
         }
 
-    RETURN_TYPES = ("LORA_STACK", "STRING", "STRING", "STRING", "STRING", "STRING")
+    RETURN_TYPES = ("LORA_STACK", "LORA_TRIGGER_WORDS", "LORA_TRIGGER_WORDS", "LORA_TRIGGER_WORDS", "LORA_TRIGGER_WORDS", "LORA_TRIGGER_WORDS")
     RETURN_NAMES = (
         "lora_stack",
         "trigger_words_1",
@@ -136,18 +141,31 @@ class LoraStackContainer5:
 # through a small settings popup.
 # ---------------------------------------------------------------------------
 class LoraTriggerFilter:
+    """Tags coming from LoRA metadata (trigger_words_1..5) are always plain
+    words with no SD-style emphasis syntax, so there's no meaningful concept
+    of one being "stronger" than another — this filter does plain,
+    case-insensitive duplicate removal instead of weight comparison."""
+
     @classmethod
     def INPUT_TYPES(cls):
         return {
             "required": {
-                "sort_mode": (["frequency_order", "alphabetical"], {"default": "frequency_order"}),
+                # plain, freely-typable/connectable STRING. Shows as an
+                # editable text box when nothing is wired in. Its words get
+                # TOP priority in the output — see filter_words below.
+                "extra_words": ("STRING", {"multiline": True, "default": ""}),
             },
             "optional": {
-                "word_list_1": ("STRING", {"forceInput": True, "default": ""}),
-                "word_list_2": ("STRING", {"forceInput": True, "default": ""}),
-                "word_list_3": ("STRING", {"forceInput": True, "default": ""}),
-                "word_list_4": ("STRING", {"forceInput": True, "default": ""}),
-                "word_list_5": ("STRING", {"forceInput": True, "default": ""}),
+                # dedicated "LORA_TRIGGER_WORDS" sockets. This is a distinct
+                # type from plain STRING on purpose — ComfyUI will only let
+                # you wire in something that also outputs LORA_TRIGGER_WORDS
+                # (currently: a LoRA Stack Container's trigger_words_N pins),
+                # never an arbitrary Text/String node.
+                "trigger_words_1": ("LORA_TRIGGER_WORDS",),
+                "trigger_words_2": ("LORA_TRIGGER_WORDS",),
+                "trigger_words_3": ("LORA_TRIGGER_WORDS",),
+                "trigger_words_4": ("LORA_TRIGGER_WORDS",),
+                "trigger_words_5": ("LORA_TRIGGER_WORDS",),
             },
         }
 
@@ -156,35 +174,14 @@ class LoraTriggerFilter:
     FUNCTION = "filter_words"
     CATEGORY = "loaders/lora_stack"
 
-    def filter_words(self, sort_mode, word_list_1="", word_list_2="", word_list_3="",
-                      word_list_4="", word_list_5=""):
-        counts = {}
-        first_seen_order = []
-        display_form = {}
-
-        for text in (word_list_1, word_list_2, word_list_3, word_list_4, word_list_5):
-            if not text:
-                continue
-            for raw in text.split(","):
-                word = raw.strip()
-                if not word:
-                    continue
-                key = word.lower()
-                if key not in counts:
-                    counts[key] = 0
-                    first_seen_order.append(key)
-                    display_form[key] = word
-                counts[key] += 1
-
-        unique_keys = [k for k in first_seen_order if counts[k] == 1]
-
-        if sort_mode == "alphabetical":
-            unique_keys.sort(key=lambda k: display_form[k].lower())
-        # "frequency_order" -> keep first-seen order as-is: each incoming
-        # trigger_words_N string already lists tags most-to-least training
-        # images, so preserving order approximates that ranking.
-
-        result = ", ".join(display_form[k] for k in unique_keys)
+    def filter_words(self, extra_words="", trigger_words_1="", trigger_words_2="",
+                      trigger_words_3="", trigger_words_4="", trigger_words_5=""):
+        # the actual logic lives in lora_utils.filter_tag_texts so the
+        # editor's live-preview route uses the exact same code
+        result = filter_tag_texts(
+            extra_words,
+            (trigger_words_1, trigger_words_2, trigger_words_3, trigger_words_4, trigger_words_5),
+        )
         return (result,)
 
 

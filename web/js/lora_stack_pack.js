@@ -94,11 +94,73 @@ function showLoraInfoDialog(loraName, data) {
             }
             topRow.appendChild(infoCol);
 
-            if (currentData.preview_image) {
+            // "selectedPreviewUrl" tracks whichever image is currently shown
+            // as the big preview — starts as whatever the backend picked,
+            // but the user can click a thumbnail below to switch it before
+            // saving it as the permanent local preview.
+            let selectedPreviewUrl = currentData.preview_image || null;
+
+            if (selectedPreviewUrl) {
+                const previewCol = document.createElement("div");
+                previewCol.style.cssText = "display: flex; flex-direction: column; gap: 6px; flex-shrink: 0; align-items: center;";
+
                 const img = document.createElement("img");
-                img.src = currentData.preview_image;
-                img.style.cssText = "width: 180px; max-width: 100%; max-height: 260px; object-fit: cover; border-radius: 6px; flex-shrink: 0;";
-                topRow.appendChild(img);
+                img.src = selectedPreviewUrl;
+                img.style.cssText = "width: 180px; max-width: 100%; max-height: 260px; object-fit: cover; border-radius: 6px;";
+                previewCol.appendChild(img);
+
+                const candidates = currentData.preview_candidates || [];
+                if (candidates.length > 0) {
+                    const thumbRow = document.createElement("div");
+                    thumbRow.style.cssText = "display: flex; gap: 4px; flex-wrap: wrap; max-width: 180px; justify-content: center;";
+                    candidates.forEach((url) => {
+                        const thumb = document.createElement("img");
+                        thumb.src = url;
+                        const isActive = url === selectedPreviewUrl;
+                        thumb.style.cssText = `width: 34px; height: 34px; object-fit: cover; border-radius: 4px; cursor: pointer; border: 2px solid ${isActive ? "#6cf" : "transparent"};`;
+                        thumb.onclick = () => {
+                            selectedPreviewUrl = url;
+                            img.src = url;
+                            thumbRow.querySelectorAll("img").forEach((t) => {
+                                t.style.borderColor = t.src === url ? "#6cf" : "transparent";
+                            });
+                            useAsPreviewBtn.style.display = "inline-block";
+                            useAsPreviewBtn.textContent = "Use as preview";
+                        };
+                        thumbRow.appendChild(thumb);
+                    });
+                    previewCol.appendChild(thumbRow);
+                }
+
+                // only useful when there's something to pick BETWEEN, or the
+                // current one isn't saved locally yet
+                const useAsPreviewBtn = document.createElement("button");
+                useAsPreviewBtn.textContent = "Use as preview";
+                useAsPreviewBtn.style.cssText = "padding: 4px 10px; cursor: pointer; background: #2a2e37; color: #eee; border: 1px solid #444; border-radius: 5px; font-size: 12px;";
+                useAsPreviewBtn.style.display = (candidates.length > 0 || !currentData.preview_is_local) ? "inline-block" : "none";
+                useAsPreviewBtn.onclick = async () => {
+                    useAsPreviewBtn.textContent = "Saving...";
+                    try {
+                        const res = await fetch("/lora_stack_pack/set_preview", {
+                            method: "POST",
+                            headers: { "Content-Type": "application/json" },
+                            body: JSON.stringify({ lora_name: loraName, image_url: selectedPreviewUrl }),
+                        });
+                        const result = await res.json();
+                        if (result.ok) {
+                            useAsPreviewBtn.textContent = "✓ Saved";
+                            currentData.preview_image = selectedPreviewUrl;
+                            currentData.preview_is_local = true;
+                        } else {
+                            useAsPreviewBtn.textContent = "Save failed";
+                        }
+                    } catch (e) {
+                        useAsPreviewBtn.textContent = "Save failed";
+                    }
+                };
+                previewCol.appendChild(useAsPreviewBtn);
+
+                topRow.appendChild(previewCol);
             }
             box.appendChild(topRow);
 
@@ -179,6 +241,32 @@ function showLoraInfoDialog(loraName, data) {
                 cancelBtn.onclick = () => rebuild();
             };
 
+            // --- search box: filters & highlights matches in the tag grid
+            // and the Trained Words field below, live as you type ---
+            const searchWrap = document.createElement("div");
+            searchWrap.style.cssText = "margin-top: 8px;";
+            const searchInput = document.createElement("input");
+            searchInput.type = "text";
+            searchInput.placeholder = "🔍 Search tags / trained words...";
+            searchInput.style.cssText = "width: 100%; box-sizing: border-box; padding: 7px 10px; background: #111; color: #eee; border: 1px solid #444; border-radius: 5px; font-size: 13px;";
+            searchWrap.appendChild(searchInput);
+            box.appendChild(searchWrap);
+
+            const escapeHtml = (str) => str.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+            const highlightHtml = (text, term) => {
+                const escaped = escapeHtml(text);
+                if (!term) return escaped;
+                const idx = escaped.toLowerCase().indexOf(term.toLowerCase());
+                if (idx === -1) return escaped;
+                return (
+                    escaped.slice(0, idx) +
+                    '<mark style="background:#ffd54f;color:#111;border-radius:2px;padding:0 1px;">' +
+                    escaped.slice(idx, idx + term.length) +
+                    "</mark>" +
+                    escaped.slice(idx + term.length)
+                );
+            };
+
             // tag grid, sorted highest -> lowest training-image count (backend already sorts this way)
             const shownCount = (currentData.tags || []).length;
             const totalCount = currentData.total_tags || shownCount;
@@ -203,23 +291,28 @@ function showLoraInfoDialog(loraName, data) {
 
             const tagGrid = document.createElement("div");
             tagGrid.style.cssText = "display: flex; flex-wrap: wrap; gap: 6px; max-height: 220px; overflow-y: auto; padding: 4px 2px; flex-shrink: 0;";
+            const tagChipRefs = [];
             const renderTagChip = (tagObj) => {
                 const chip = document.createElement("span");
                 chip.style.cssText = `
                     background: #2c5b73; border: 1px solid #3f7691; border-radius: 5px;
                     padding: 3px 8px; cursor: pointer; user-select: none; white-space: nowrap;
+                    transition: opacity 0.1s;
                 `;
                 const countPart = (tagObj.count !== null && tagObj.count !== undefined) ? ` <b>${tagObj.count}</b>` : "";
                 chip.innerHTML = `${tagObj.tag}${countPart}`;
+                if (selected.has(tagObj.tag)) {
+                    chip.style.background = "#4a8a3f";
+                }
                 chip.onclick = () => {
                     if (selected.has(tagObj.tag)) {
                         selected.delete(tagObj.tag);
-                        chip.style.background = "#2c5b73";
                     } else {
                         selected.add(tagObj.tag);
-                        chip.style.background = "#4a8a3f";
                     }
+                    chip.style.background = selected.has(tagObj.tag) ? "#4a8a3f" : "#2c5b73";
                 };
+                tagChipRefs.push({ tagObj, chip });
                 return chip;
             };
             (currentData.tags || []).forEach((t) => tagGrid.appendChild(renderTagChip(t)));
@@ -243,6 +336,27 @@ function showLoraInfoDialog(loraName, data) {
                 : "(none found — no .civitai.info sidecar next to this file, or it has no trainedWords)";
             twBox.style.cssText = `background: #111; border: 1px solid #333; border-radius: 4px; padding: 6px 8px; opacity: ${hasTrainedWords ? 1 : 0.6};`;
             box.appendChild(twBox);
+
+            const applySearch = (rawTerm) => {
+                const term = rawTerm.trim();
+                let firstMatchChip = null;
+                tagChipRefs.forEach(({ tagObj, chip }) => {
+                    const match = !term || tagObj.tag.toLowerCase().includes(term.toLowerCase());
+                    const countPart = (tagObj.count !== null && tagObj.count !== undefined) ? ` <b>${tagObj.count}</b>` : "";
+                    chip.innerHTML = highlightHtml(tagObj.tag, term) + countPart;
+                    chip.style.opacity = match ? "1" : "0.2";
+                    if (match && term && !firstMatchChip) firstMatchChip = chip;
+                });
+                if (firstMatchChip) {
+                    firstMatchChip.scrollIntoView({ block: "nearest" });
+                }
+                if (hasTrainedWords) {
+                    twBox.innerHTML = currentData.trained_words
+                        .map((w) => highlightHtml(w, term))
+                        .join(", ");
+                }
+            };
+            searchInput.oninput = () => applySearch(searchInput.value);
 
             // raw metadata (collapsible content area; the toggle itself is a
             // full-width button placed in the button stack below, matching
@@ -297,7 +411,9 @@ function showLoraInfoDialog(loraName, data) {
                     flashButton(copySelectedBtn, "Nothing selected", BTN_EMPTY_BG);
                     return;
                 }
-                const ok = await copyText(Array.from(selected).join(", "));
+                // trailing comma so pasting several copied lists back-to-back
+                // never merges the last tag of one into the first of the next
+                const ok = await copyText(Array.from(selected).join(", ") + ",");
                 flashButton(copySelectedBtn, ok ? `✓ Copied ${count}` : "Copy failed", ok ? BTN_SUCCESS_BG : "#7a2a2a");
             };
 
@@ -308,7 +424,7 @@ function showLoraInfoDialog(loraName, data) {
                     flashButton(copyAllBtn, "No tags", BTN_EMPTY_BG);
                     return;
                 }
-                const ok = await copyText(tags.map((t) => t.tag).join(", "));
+                const ok = await copyText(tags.map((t) => t.tag).join(", ") + ",");
                 flashButton(copyAllBtn, ok ? `✓ Copied ${tags.length}` : "Copy failed", ok ? BTN_SUCCESS_BG : "#7a2a2a");
             };
 
@@ -365,13 +481,6 @@ function createSpacerWidget() {
     };
 }
 
-function hideWidget(widget) {
-    widget.origType = widget.type;
-    widget.origComputeSize = widget.computeSize;
-    widget.computeSize = () => [0, -4];
-    widget.type = "lora_stack_hidden";
-}
-
 function moveWidgetAfter(node, widget, afterWidget) {
     const from = node.widgets.indexOf(widget);
     if (from === -1) return;
@@ -405,68 +514,147 @@ function setupContainerNode(node) {
 }
 
 // ---------------------------------------------------------------------------
-// Trigger Filter: hides the native "sort_mode" combo and drives it through a
-// small settings popup instead, opened via a "⚙ Filter Settings" button.
+// Trigger Filter: live preview of its own output, without queueing a prompt.
+//
+// The real filtering runs in Python, so the editor can't see the result
+// until a run. To let downstream frontend-only nodes (e.g. the Tag Toggles
+// Reader, which reads a connected node's widget named "text" every frame)
+// show up-to-date tags immediately, this watches the LoRA names selected in
+// the directly-connected Container node(s) plus our own extra_words, asks
+// the backend's /lora_stack_pack/filter route for the same result the node
+// would produce, and stores it in a hidden, non-serialized widget "text".
+//
+// Only DIRECT links Container -> Trigger Filter are understood; anything
+// in between (other nodes) is invisible to this and simply yields no tags.
 // ---------------------------------------------------------------------------
-const SORT_MODES = [
-    { value: "frequency_order", label: "За кількістю тренувальних зображень (як прийшло)" },
-    { value: "alphabetical", label: "Алфавітний порядок" },
-];
+function getLinkById(linkId) {
+    const links = app.graph && app.graph.links;
+    if (!links || linkId === null || linkId === undefined) return null;
+    return typeof links.get === "function" ? links.get(linkId) : links[linkId];
+}
 
-function openFilterSettingsPopup(node, sortModeWidget) {
-    openModal((box, close) => {
-        const title = document.createElement("div");
-        title.textContent = "Filter Settings";
-        title.style.cssText = "font-weight: 700; font-size: 15px;";
-        box.appendChild(title);
+// LoRA name feeding trigger_words_<index>, or "" if unconnected / not a Container
+function loraNameForFilterInput(node, index) {
+    const slot = node.inputs ? node.inputs.findIndex((inp) => inp.name === `trigger_words_${index}`) : -1;
+    if (slot < 0) return "";
+    const link = getLinkById(node.inputs[slot].link);
+    if (!link) return "";
+    const origin = app.graph.getNodeById(link.origin_id);
+    if (!origin || origin.comfyClass !== "LoraStackContainer5") return "";
+    const outSlot = link.origin_slot; // 0 = lora_stack, 1..5 = trigger_words_1..5
+    if (outSlot < 1 || outSlot > 5) return "";
+    const w = origin.widgets ? origin.widgets.find((x) => x.name === `slot${outSlot}_lora_name`) : null;
+    const v = w && typeof w.value === "string" ? w.value : "";
+    return v === "None" ? "" : v;
+}
 
-        const desc = document.createElement("div");
-        desc.textContent = "Сортування списку слів, що лишились після фільтрації повторів:";
-        desc.style.cssText = "opacity: 0.75;";
-        box.appendChild(desc);
+// Best-effort read of the string wired into `inputName` of `node`. Works for
+// anything that keeps its text in a frontend widget (Text Multiline, a
+// Primitive, another Trigger Filter's live "text", ...) and follows Reroute
+// style pass-through nodes. Text produced only by Python at run time can't be
+// seen from here — that case yields null (the real run still works).
+const UPSTREAM_TEXT_WIDGET_NAMES = ["text", "string", "value", "prompt", "tags"];
 
-        SORT_MODES.forEach((mode) => {
-            const row = document.createElement("label");
-            row.style.cssText = "display: flex; align-items: center; gap: 8px; padding: 6px; cursor: pointer; border-radius: 5px;";
-            const radio = document.createElement("input");
-            radio.type = "radio";
-            radio.name = "lora_stack_sort_mode";
-            radio.checked = sortModeWidget.value === mode.value;
-            radio.onchange = () => {
-                sortModeWidget.value = mode.value;
-                if (typeof sortModeWidget.callback === "function") {
-                    sortModeWidget.callback(mode.value, app.canvas, node);
-                }
-                node.setDirtyCanvas(true, true);
-            };
-            const label = document.createElement("span");
-            label.textContent = mode.label;
-            row.appendChild(radio);
-            row.appendChild(label);
-            box.appendChild(row);
-        });
+function isInputLinked(node, inputName) {
+    const inp = node.inputs ? node.inputs.find((i) => i.name === inputName) : null;
+    return !!(inp && inp.link !== null && inp.link !== undefined && getLinkById(inp.link));
+}
 
-        const btnRow = document.createElement("div");
-        btnRow.style.cssText = "margin-top: 10px;";
-        const closeBtn = document.createElement("button");
-        closeBtn.textContent = "Close";
-        closeBtn.style.cssText = "padding: 8px 14px; cursor: pointer; background: #2a2e37; color: #eee; border: 1px solid #444; border-radius: 5px;";
-        closeBtn.onclick = close;
-        btnRow.appendChild(closeBtn);
-        box.appendChild(btnRow);
-    });
+function readWidgetString(originNode) {
+    const ws = originNode.widgets || [];
+    for (const name of UPSTREAM_TEXT_WIDGET_NAMES) {
+        const w = ws.find((x) => x.name === name && typeof x.value === "string");
+        if (w) return w.value;
+    }
+    const first = ws.find((x) => typeof x.value === "string");
+    return first ? first.value : null;
+}
+
+function readUpstreamString(node, inputName, depth = 0) {
+    if (depth > 8 || !node.inputs) return null;
+    const inp = node.inputs.find((i) => i.name === inputName);
+    const link = inp ? getLinkById(inp.link) : null;
+    if (!link) return null;
+    const origin = app.graph.getNodeById(link.origin_id);
+    if (!origin) return null;
+    const direct = readWidgetString(origin);
+    if (direct !== null) return direct;
+    // no text widget: maybe a pass-through node — follow its first input
+    if (origin.inputs && origin.inputs.length > 0) {
+        return readUpstreamString(origin, origin.inputs[0].name, depth + 1);
+    }
+    return null;
 }
 
 function setupTriggerFilterNode(node) {
-    const sortModeWidget = node.widgets.find((w) => w.name === "sort_mode");
-    if (!sortModeWidget) return;
-    hideWidget(sortModeWidget);
+    // Hidden, zero-height widget. The name "text" is deliberate: the Tag
+    // Toggles Reader looks for a widget called "text" first.
+    const liveWidget = {
+        name: "text",
+        type: "lora_stack_live_text",
+        value: "",
+        serialize: false,
+        options: { serialize: false },
+        draw() {},
+        computeSize() { return [0, -4]; },
+        mouse() { return false; },
+    };
+    node.widgets.push(liveWidget);
 
-    const settingsBtn = node.addWidget("button", "⚙ Filter Settings", null, () => {
-        openFilterSettingsPopup(node, sortModeWidget);
-    });
-    moveWidgetAfter(node, settingsBtn, sortModeWidget);
-    node.setDirtyCanvas(true, true);
+    let alive = true;
+    const origOnRemoved = node.onRemoved;
+    node.onRemoved = function () {
+        alive = false;
+        return origOnRemoved ? origOnRemoved.apply(this, arguments) : undefined;
+    };
+
+    let lastKey = null;
+    let debounceTimer = null;
+    let requestSeq = 0;
+
+    function readState() {
+        // when a wire is plugged into the extra_words pin, its own widget
+        // value is stale — the real text comes from the connected node
+        let extra = "";
+        if (isInputLinked(node, "extra_words")) {
+            const up = readUpstreamString(node, "extra_words");
+            extra = typeof up === "string" ? up : "";
+        } else {
+            const extraW = node.widgets ? node.widgets.find((w) => w.name === "extra_words") : null;
+            extra = extraW && typeof extraW.value === "string" ? extraW.value : "";
+        }
+        const names = [1, 2, 3, 4, 5].map((i) => loraNameForFilterInput(node, i));
+        return { extra, names, key: JSON.stringify([extra, names]) };
+    }
+
+    async function refresh(state) {
+        const seq = ++requestSeq;
+        try {
+            const res = await fetch("/lora_stack_pack/filter", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ extra_words: state.extra, lora_names: state.names }),
+            });
+            const data = await res.json();
+            if (!alive || seq !== requestSeq) return; // a newer request superseded this one
+            liveWidget.value = typeof data.filtered === "string" ? data.filtered : "";
+            node.setDirtyCanvas(true, true);
+        } catch (e) {
+            /* keep the previous value if the request fails */
+        }
+    }
+
+    function tick() {
+        if (!alive) return;
+        const state = readState();
+        if (state.key !== lastKey) {
+            lastKey = state.key;
+            clearTimeout(debounceTimer);
+            debounceTimer = setTimeout(() => refresh(state), 250);
+        }
+        requestAnimationFrame(tick);
+    }
+    requestAnimationFrame(tick);
 }
 
 app.registerExtension({

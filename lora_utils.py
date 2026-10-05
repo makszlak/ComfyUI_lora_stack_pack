@@ -148,25 +148,25 @@ def _extract_trained_words(data):
     return []
 
 
-def _extract_remote_preview_url(data):
-    """If the sidecar JSON references example images (Civitai's own API shape
-    always includes an 'images' array with hosted URLs), use the first one as
-    a fallback preview when there's no local preview file next to the LoRA."""
+def _extract_remote_preview_urls(data, limit=8):
+    """All example-image URLs the sidecar JSON references (Civitai's own API
+    shape always includes an 'images' array with hosted URLs), so the popup
+    can offer a choice instead of always defaulting to the first one."""
+    urls = []
     if not isinstance(data, dict):
-        return None
-    for images in (data.get("images"), (data.get("model") or {}).get("images")):
-        if isinstance(images, list):
-            for img in images:
-                if isinstance(img, dict) and img.get("url"):
-                    return img["url"]
+        return urls
+    sources = [data.get("images"), (data.get("model") or {}).get("images")]
     model_versions = data.get("modelVersions")
     if isinstance(model_versions, list) and model_versions and isinstance(model_versions[0], dict):
-        images = model_versions[0].get("images")
+        sources.append(model_versions[0].get("images"))
+    for images in sources:
         if isinstance(images, list):
             for img in images:
-                if isinstance(img, dict) and img.get("url"):
-                    return img["url"]
-    return None
+                if isinstance(img, dict) and img.get("url") and img["url"] not in urls:
+                    urls.append(img["url"])
+                    if len(urls) >= limit:
+                        return urls
+    return urls
 
 
 def _find_civitai_sidecar_path(lora_path):
@@ -238,7 +238,7 @@ def _read_civitai_sidecar(lora_path):
         "civitai_url": civitai_url,
         "civitai_label": _first(model.get("name"), data.get("name")) or "View on Civitai",
         "trained_words": _extract_trained_words(data),
-        "remote_preview_url": _extract_remote_preview_url(data),
+        "remote_preview_urls": _extract_remote_preview_urls(data),
     }
 
 
@@ -299,6 +299,65 @@ def save_user_notes(lora_name, notes):
             f.write(notes or "")
         return True, None
     except Exception as e:
+        return False, str(e)
+
+
+_PREVIEW_DOWNLOAD_TIMEOUT = 10
+_PREVIEW_VARIANT_EXTS = [".preview.png", ".preview.jpg", ".preview.jpeg", ".preview.webp"]
+
+
+def _guess_image_ext(content_type, url):
+    ct = (content_type or "").lower()
+    if "png" in ct:
+        return ".png"
+    if "webp" in ct:
+        return ".webp"
+    if "jpeg" in ct or "jpg" in ct:
+        return ".jpg"
+    lower = url.lower().split("?")[0]
+    for ext in (".png", ".webp", ".jpeg", ".jpg"):
+        if lower.endswith(ext):
+            return ".jpg" if ext == ".jpeg" else ext
+    return ".jpg"
+
+
+def save_preview_image_from_url(lora_name, image_url):
+    """Downloads the chosen example image and saves it as a local
+    '<name>.preview.<ext>' file next to the LoRA, so it becomes the
+    permanent preview from now on (found first by _find_preview_image,
+    ahead of any remote fallback)."""
+    path = _resolve_lora_path(lora_name)
+    if not path:
+        return False, "LoRA file not found."
+    if not image_url:
+        return False, "No image URL given."
+    try:
+        req = urllib.request.Request(image_url, headers={"User-Agent": "ComfyUI-LoraStackPack/1.0"})
+        with urllib.request.urlopen(req, timeout=_PREVIEW_DOWNLOAD_TIMEOUT) as resp:
+            content_type = resp.headers.get("Content-Type", "")
+            data = resp.read()
+        if len(data) > _MAX_PREVIEW_BYTES:
+            return False, "Image is too large to save."
+
+        base, _ext = os.path.splitext(path)
+        ext = _guess_image_ext(content_type, image_url)
+
+        # remove any previously saved preview.* variants first, so the new
+        # pick isn't shadowed by a stale file of a different extension
+        for old_ext in _PREVIEW_VARIANT_EXTS:
+            old_path = base + old_ext
+            if os.path.exists(old_path):
+                try:
+                    os.remove(old_path)
+                except Exception:
+                    pass
+
+        target_path = base + ".preview" + ext
+        with open(target_path, "wb") as f:
+            f.write(data)
+        return True, None
+    except Exception as e:
+        print(f"[LoraStackPack] Failed saving chosen preview for '{lora_name}': {e}")
         return False, str(e)
 
 
@@ -384,15 +443,19 @@ def get_trained_words(lora_name):
 
 
 def extract_trigger_words(lora_name):
-    """Comma-separated string of the top DEFAULT_TAG_LIMIT tags/trigger words
-    for this LoRA — the exact same data and cut-off the info popup shows by
-    default, sorted from most to least training images."""
-    tags = get_tag_frequency_list(lora_name)
+    """Comma-separated string of ALL tags/trigger words known for this LoRA
+    (used for the Container node's actual trigger_words_N output) — no cap,
+    unlike the popup's display list which defaults to a 200-tag preview.
+    Sorted from most to least training images. Always ends with a trailing
+    comma (when non-empty) so that concatenating several LoRAs' outputs
+    together in a text node never merges the last tag of one into the first
+    tag of the next."""
+    tags = get_tag_frequency_list(lora_name, limit=None)
     if tags:
-        return ", ".join(t["tag"] for t in tags)
+        return ", ".join(t["tag"] for t in tags) + ","
     trained = get_trained_words(lora_name)
     if trained:
-        return ", ".join(trained)
+        return ", ".join(trained) + ","
     return ""
 
 
@@ -404,7 +467,8 @@ def get_lora_full_info(lora_name, full=False):
         return {
             "name": lora_name, "base_model": "", "clip_skip": "", "resolution": "",
             "notes": "", "download_url": None, "civitai_url": None, "civitai_label": "",
-            "preview_image": None, "tags": [], "total_tags": 0, "trained_words": [],
+            "preview_image": None, "preview_is_local": False, "preview_candidates": [],
+            "tags": [], "total_tags": 0, "trained_words": [],
             "user_notes": "", "raw_metadata": {}, "error": "File not found.",
         }
 
@@ -413,7 +477,13 @@ def get_lora_full_info(lora_name, full=False):
     all_tags = _all_tag_frequency(lora_name)
     tags = all_tags if full else all_tags[:DEFAULT_TAG_LIMIT]
 
-    preview = _find_preview_image(path) or civitai.get("remote_preview_url")
+    remote_candidates = civitai.get("remote_preview_urls") or []
+    local_preview = _find_preview_image(path)
+    preview = local_preview or (remote_candidates[0] if remote_candidates else None)
+    # whether the currently-shown preview is already a locally saved file
+    # (vs. one still being streamed from a remote URL) — the popup uses this
+    # to know whether "Use as preview" needs to actually download anything
+    preview_is_local = bool(local_preview)
 
     base_model = (
         civitai.get("base_model")
@@ -444,6 +514,8 @@ def get_lora_full_info(lora_name, full=False):
         "civitai_url": civitai.get("civitai_url"),
         "civitai_label": civitai.get("civitai_label") or "",
         "preview_image": preview,
+        "preview_is_local": preview_is_local,
+        "preview_candidates": remote_candidates,
         "tags": tags,
         "total_tags": len(all_tags),
         "trained_words": trained_words,
@@ -451,3 +523,52 @@ def get_lora_full_info(lora_name, full=False):
         "raw_metadata": meta,
         "error": None,
     }
+
+
+def filter_tag_texts(extra_words, tag_texts):
+    """Shared duplicate-removal logic used by BOTH the Trigger Filter node
+    (at execution time) and the live-preview HTTP route (in the editor), so
+    the two can never disagree.
+
+    Case-insensitive. Words from `extra_words` come first and always win: a
+    later duplicate of one of them is ignored. Among `tag_texts`, a word
+    that appears in more than one place is dropped entirely."""
+    order = []
+    counts = {}
+    display_form = {}
+    locked = set()
+
+    def process(text, is_priority=False):
+        if not text:
+            return
+        for raw in text.split(","):
+            word = raw.strip()
+            if not word:
+                continue
+            key = word.lower()
+            if is_priority:
+                locked.add(key)
+            elif key in locked:
+                continue
+            if key not in counts:
+                counts[key] = 0
+                order.append(key)
+                display_form[key] = word
+            counts[key] += 1
+
+    process(extra_words, is_priority=True)
+    for text in tag_texts:
+        process(text)
+
+    kept_keys = [k for k in order if k in locked or counts[k] == 1]
+    return ", ".join(display_form[k] for k in kept_keys)
+
+
+def compute_live_filtered(extra_words, lora_names):
+    """Editor-time equivalent of running Container -> Trigger Filter:
+    `lora_names` is one entry per trigger_words_N input (in order 1..5),
+    empty string for an unconnected input."""
+    texts = []
+    for name in lora_names:
+        texts.append(extract_trigger_words(name) if name and name != "None" else "")
+    return filter_tag_texts(extra_words, texts)
