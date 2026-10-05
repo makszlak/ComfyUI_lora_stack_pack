@@ -6,7 +6,7 @@
 returns one ready-made line for the prompt. |
 
 
-===========================================================================================
+============================================================================
 
 ## 1. LoRA Stack Container - `LoraStackContainer5`
 
@@ -36,7 +36,7 @@ container to combine more than 5 LoRAs into one stack.
   merged with the first tag of the next one.
 
 
-===========================================================================================
+============================================================================
 
 ## 2. Load LoRA (StackInput) — `LoraStackInputLoader`
 
@@ -55,7 +55,7 @@ Applies to `clip`
 
 A node does not have its own LoRA selection — all selection is done in the Container(s). 
 
-===========================================================================================
+============================================================================
 
 ## 3. Trigger Filter - `LoraTriggerFilter`
 
@@ -120,7 +120,7 @@ which is only computed in Python at startup (does not lie in the
   every discovery.
 
 
-===========================================================================================
+============================================================================
 
 ## Popup ⚙ Info
 
