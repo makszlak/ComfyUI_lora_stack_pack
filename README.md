@@ -1,5 +1,7 @@
 [![ko-fi](https://ko-fi.com/img/githubbutton_sm.svg)](https://ko-fi.com/A0A51HRY6J)
 
+[![Comfy Registry Downloads](https://img.shields.io/badge/dynamic/json?url=https%3A%2F%2Fapi.comfy.org%2Fnodes%2Fcomfyui-lora-stack-pack&query=%24.downloads&label=downloads&logo=comfyui&color=blue)](https://registry.comfy.org/nodes/comfyui-lora-stack-pack)
+
 | **LoRA Stack Container** | Collects a selection of 5 LoRAs (+ weights) into one `LORA_STACK`. Applies nothing to the model—only the data. |
 | **Load LoRA (StackInput)** | Takes `model`, `clip`, `lora_stack` and applies the entire stack. The only note touching the model. |
 | **Trigger Filter** | Accepts trigger words from container(s), removes duplicates,
