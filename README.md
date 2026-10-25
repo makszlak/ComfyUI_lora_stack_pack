@@ -1,6 +1,6 @@
 [![ko-fi](https://ko-fi.com/img/githubbutton_sm.svg)](https://ko-fi.com/A0A51HRY6J)
 
-[![Comfy Registry Downloads](https://img.shields.io/badge/dynamic/json?url=https%3A%2F%2Fapi.comfy.org%2Fnodes%2Fcomfyui-lora-stack-pack&query=%24.downloads&label=downloads&logo=comfyui&color=blue)](https://registry.comfy.org/nodes/comfyui-lora-stack-pack)
+[![ComfyUI Registry Downloads](https://img.shields.io/badge/dynamic/json?url=https%3A%2F%2Fapi.comfy.org%2Fnodes%2Fcomfyui-lora-stack-pack&query=%24.downloads&label=downloads&logo=comfyui&color=blue)](https://registry.comfy.org/nodes/comfyui-lora-stack-pack)
 
 [![GitHub Release Downloads](https://img.shields.io/github/downloads/makszlak/ComfyUI_lora_stack_pack/total?label=downloads&logo=github&color=blue)](https://github.com/makszlak/ComfyUI_lora_stack_pack/releases)
 
