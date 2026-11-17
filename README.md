@@ -5,15 +5,6 @@
 [![Discord](https://img.shields.io/badge/Discord-Join%20Server-5865F2?style=for-the-badge&logo=discord&logoColor=white)](https://discord.gg/WgTG7AXtfJ)
 [![Telegram](https://img.shields.io/badge/Telegram-Join%20Chat-26A5E4?style=for-the-badge&logo=telegram&logoColor=white)](https://t.me/+zXJfJEFyYJ9hOGQy)
 
-<p align="center">
-  <a href="https://discord.gg/WgTG7AXtfJ">
-    <img src="https://img.shields.io/badge/Discord-Join%20us-5865F2?style=for-the-badge&logo=discord&logoColor=white" alt="Discord">
-  </a>
-  <a href="https://t.me/+zXJfJEFyYJ9hOGQy">
-    <img src="https://img.shields.io/badge/Telegram-Join%20us-26A5E4?style=for-the-badge&logo=telegram&logoColor=white" alt="Telegram">
-  </a>
-</p>
-
 | **LoRA Stack Container** | Collects a selection of 5 LoRAs (+ weights) into one `LORA_STACK`. Applies nothing to the model—only the data. |
 | **Load LoRA (StackInput)** | Takes `model`, `clip`, `lora_stack` and applies the entire stack. The only note touching the model. |
 | **Trigger Filter** | Accepts trigger words from container(s), removes duplicates,
